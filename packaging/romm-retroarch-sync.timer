@@ -1,0 +1,9 @@
+[Unit]
+Description=Periodic RetroArch <-> RomM save sync
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=15min
+
+[Install]
+WantedBy=timers.target

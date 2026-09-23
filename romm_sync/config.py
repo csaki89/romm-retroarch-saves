@@ -1,0 +1,123 @@
+import configparser
+import os
+import socket
+from dataclasses import dataclass
+from pathlib import Path
+
+DEFAULT_SAVES_DIR = "~/.var/app/org.libretro.RetroArch/config/retroarch/saves"
+DEFAULT_STATES_DIR = "~/.var/app/org.libretro.RetroArch/config/retroarch/states"
+
+DEFAULT_CONFIG_PATH = Path(
+    os.environ.get("ROMM_SYNC_CONFIG")
+    or Path(os.environ.get("XDG_CONFIG_HOME", "~/.config")).expanduser()
+    / "romm-retroarch-sync"
+    / "config.ini"
+).expanduser()
+
+DEFAULT_STATE_DIR = (
+    Path(os.environ.get("XDG_STATE_HOME", "~/.local/state")).expanduser()
+    / "romm-retroarch-sync"
+)
+
+CONFLICT_POLICIES = ("newer", "local", "server")
+
+
+class ConfigError(RuntimeError):
+    pass
+
+
+@dataclass
+class Config:
+    path: Path
+    url: str
+    token: str
+    device_name: str
+    saves_dir: Path
+    states_dir: Path
+    conflict_policy: str
+    log_file: Path
+    log_level: str
+    state_file: Path
+
+
+def load_config(path=None):
+    path = Path(path).expanduser() if path else DEFAULT_CONFIG_PATH
+    if not path.exists():
+        raise ConfigError(
+            f"Config file not found: {path}\n"
+            "Run `romm-sync pair --url <romm-url> --code <pairing-code>` "
+            "or create it from config.example.ini."
+        )
+
+    parser = configparser.ConfigParser()
+    parser.read(path)
+
+    def get(section, key, default=None):
+        return parser.get(section, key, fallback=default)
+
+    url = get("romm", "url")
+    if not url:
+        raise ConfigError(f"Missing [romm] url in {path}")
+    token = get("romm", "token")
+    if not token:
+        raise ConfigError(
+            f"Missing [romm] token in {path}. "
+            f"Run `romm-sync pair --url {url} --code <pairing-code>`."
+        )
+
+    policy = get("sync", "conflict_policy", "newer").strip().lower()
+    if policy not in CONFLICT_POLICIES:
+        raise ConfigError(
+            f"Invalid [sync] conflict_policy {policy!r}; use one of {CONFLICT_POLICIES}"
+        )
+
+    return Config(
+        path=path,
+        url=url.rstrip("/"),
+        token=token.strip(),
+        device_name=get("romm", "device_name") or socket.gethostname(),
+        saves_dir=Path(get("retroarch", "saves_dir", DEFAULT_SAVES_DIR)).expanduser(),
+        states_dir=Path(get("retroarch", "states_dir", DEFAULT_STATES_DIR)).expanduser(),
+        conflict_policy=policy,
+        log_file=Path(
+            get("logging", "file", str(DEFAULT_STATE_DIR / "sync.log"))
+        ).expanduser(),
+        log_level=get("logging", "level", "INFO").strip().upper(),
+        state_file=Path(
+            get("state", "file", str(DEFAULT_STATE_DIR / "state.json"))
+        ).expanduser(),
+    )
+
+
+def write_token(path, url, token, device_name=None):
+    """Store url/token in the config, creating it with defaults if missing."""
+    path = Path(path).expanduser()
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    parser = configparser.ConfigParser()
+    if path.exists():
+        parser.read(path)
+
+    for section in ("romm", "retroarch", "sync", "logging"):
+        if not parser.has_section(section):
+            parser.add_section(section)
+
+    parser.set("romm", "url", url.rstrip("/"))
+    parser.set("romm", "token", token)
+    if device_name:
+        parser.set("romm", "device_name", device_name)
+    if not parser.has_option("retroarch", "saves_dir"):
+        parser.set("retroarch", "saves_dir", DEFAULT_SAVES_DIR)
+    if not parser.has_option("retroarch", "states_dir"):
+        parser.set("retroarch", "states_dir", DEFAULT_STATES_DIR)
+    if not parser.has_option("sync", "conflict_policy"):
+        parser.set("sync", "conflict_policy", "newer")
+    if not parser.has_option("logging", "level"):
+        parser.set("logging", "level", "INFO")
+
+    with open(path, "w") as f:
+        parser.write(f)
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass

@@ -1,0 +1,8 @@
+[Unit]
+Description=Sync RetroArch saves and states with RomM
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.venvs/romm-sync/bin/romm-sync sync
