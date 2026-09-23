@@ -16,12 +16,22 @@ from pathlib import Path
 log = logging.getLogger("romm_sync.watch")
 
 LOOPBACK = ("127.0.0.1", "localhost", "::1")
+RETRY_DELAY = 60.0  # seconds before retrying a sync that crashed
 
 
 class State(enum.Enum):
     DOWN = "down"          # RetroArch not answering
     IDLE = "idle"          # answering, no content loaded (CONTENTLESS)
     LOADED = "loaded"      # content loaded (PLAYING / PAUSED): NEVER sync
+
+
+class UnknownStatus(str):
+    """"UNKNOWN" that remembers the raw reply, for diagnostics."""
+
+    def __new__(cls, raw):
+        obj = super().__new__(cls, "UNKNOWN")
+        obj.raw = raw
+        return obj
 
 
 def parse_status(text):
@@ -35,7 +45,7 @@ def parse_status(text):
         return None
     if word in ("CONTENTLESS", "PLAYING", "PAUSED"):
         return word
-    return "UNKNOWN"  # treated like loaded content (the safe side)
+    return UnknownStatus(text.strip())  # treated like loaded content (safe side)
 
 
 def query_status(host, port, timeout=0.5):
@@ -107,17 +117,35 @@ class StateMachine:
     Never while content is loaded, and not on CONTENTLESS -> PLAYING.
     """
 
-    def __init__(self, failure_threshold=3, idle_interval=900.0):
+    def __init__(self, failure_threshold=3, idle_interval=900.0,
+                 unknown_warn_interval=900.0):
         self.failure_threshold = failure_threshold
         self.idle_interval = idle_interval
+        self.unknown_warn_interval = unknown_warn_interval
         self.state = None  # unknown until the first answer / confirmed outage
         self.fails = 0
         self.last_sync = None
+        self._unknown_warned_at = None
+
+    def _note_unknown(self, status, now):
+        if status != "UNKNOWN":
+            self._unknown_warned_at = None
+            return
+        last = self._unknown_warned_at
+        if last is None or now - last >= self.unknown_warn_interval:
+            self._unknown_warned_at = now
+            log.warning(
+                "RetroArch sent an unrecognized GET_STATUS reply: %r. Treating it "
+                "as content loaded, so syncs stay blocked until a known status "
+                "(CONTENTLESS/PLAYING/PAUSED) arrives.",
+                getattr(status, "raw", "<raw reply unavailable>"),
+            )
 
     def observe(self, status, now):
         if status is None:
             return self._no_answer()
         self.fails = 0
+        self._note_unknown(status, now)
         prev = self.state
         self.state = State.IDLE if status == "CONTENTLESS" else State.LOADED
 
@@ -160,7 +188,16 @@ class StateMachine:
         return reason
 
     def mark_synced(self, now):
+        """A sync actually ran (even if it reported errors)."""
         self.last_sync = now
+
+    def restore(self, last_sync):
+        """A triggered sync never started: undo the clock reset of the trigger."""
+        self.last_sync = last_sync
+
+    def retry_soon(self, now, delay=RETRY_DELAY):
+        """The sync crashed: due again after `delay`s, not a whole interval."""
+        self.last_sync = now - self.idle_interval + delay
 
 
 # --- watcher -----------------------------------------------------------------
@@ -182,9 +219,10 @@ class Watcher:
 
     def tick(self):
         """One poll + decision. Never blocks on a running sync."""
+        clock_before = self.machine.last_sync
         reason = self.machine.observe(self.query(), self.clock())
         if reason:
-            self._trigger(reason)
+            self._trigger(reason, clock_before)
 
     def run(self):
         log.info(
@@ -211,17 +249,20 @@ class Watcher:
             log.info("Waiting for the running sync to finish...")
             worker.join()
 
-    def _trigger(self, reason):
+    def _trigger(self, reason, clock_before):
         if not self._sync_lock.acquire(blocking=False):
             log.warning("Sync trigger %r dropped: a sync is still running", reason)
             return
         log.info("Sync triggered by: %s", reason)
         self._worker = threading.Thread(
-            target=self._sync_worker, args=(reason,), name="romm-sync", daemon=False
+            target=self._sync_worker,
+            args=(reason, clock_before),
+            name="romm-sync",
+            daemon=False,
         )
         self._worker.start()
 
-    def _sync_worker(self, reason):
+    def _sync_worker(self, reason, clock_before):
         try:
             # Re-check right before starting: content may have loaded since.
             status = self.query()
@@ -230,11 +271,15 @@ class Watcher:
                     "Sync (%s) skipped: RetroArch reports %s just before start",
                     reason, status,
                 )
+                self.machine.restore(clock_before)  # no sync happened: keep the clock
                 return
-            rc = self.sync_fn()
-            log.info("Sync (%s) finished %s", reason, "OK" if rc == 0 else "WITH ERRORS")
-        except Exception:
-            log.exception("Sync (%s) crashed", reason)
-        finally:
+            try:
+                rc = self.sync_fn()
+            except Exception:
+                log.exception("Sync (%s) crashed", reason)
+                self.machine.retry_soon(self.clock())
+                return
             self.machine.mark_synced(self.clock())
+            log.info("Sync (%s) finished %s", reason, "OK" if rc == 0 else "WITH ERRORS")
+        finally:
             self._sync_lock.release()

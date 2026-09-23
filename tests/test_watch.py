@@ -6,6 +6,7 @@ import pytest
 from romm_sync import config as cfgmod
 from romm_sync.config import WatchConfig
 from romm_sync.watch import (
+    State,
     StateMachine,
     Watcher,
     check_network_commands,
@@ -280,3 +281,102 @@ def test_watch_config_defaults_and_overrides(tmp_path):
 def test_watch_config_rejects_bad_values(tmp_path, extra):
     with pytest.raises(cfgmod.ConfigError):
         cfgmod.load_config(_write_cfg(tmp_path, extra))
+
+
+# --- clock handling around skipped / crashed / failed syncs --------------------
+
+def _idle_watcher(statuses, sync_fn, clock):
+    """Watcher already idle with last sync at t=0 and a 900s interval."""
+    w = make_watcher(statuses, sync_fn, clock)
+    w.machine.state = State.IDLE
+    w.machine.last_sync = 0.0
+    return w
+
+
+def test_skipped_sync_does_not_reset_idle_clock():
+    calls = []
+    # idle-interval fires, but the pre-start re-check sees PLAYING
+    w = _idle_watcher([C, P], lambda: calls.append(1) or 0, lambda: 1000.0)
+    w.tick()
+    w.wait_for_sync()
+    assert calls == []
+    assert w.machine.last_sync == 0.0          # clock untouched
+
+
+def test_skipped_sync_is_retried_right_away_when_idle_again():
+    calls = []
+    w = _idle_watcher([C, P, C, C], lambda: calls.append(1) or 0, lambda: 1000.0)
+    w.tick()                                   # trigger, re-check says PLAYING: skipped
+    w.wait_for_sync()
+    w.tick()                                   # still overdue -> triggers again
+    w.wait_for_sync()
+    assert calls == [1]
+
+
+def test_crashed_sync_retries_soon_not_after_full_interval():
+    def boom():
+        raise RuntimeError("x")
+
+    w = _idle_watcher([C, C], boom, lambda: 1000.0)
+    w.tick()
+    w.wait_for_sync()
+    # due again 60s after the crash, not 900s
+    assert w.machine.last_sync == 1000.0 - 900.0 + 60.0
+    assert w.machine.observe(C, 1059.0) is None
+    assert w.machine.observe(C, 1060.0) == "idle-interval"
+
+
+def test_sync_that_ran_with_errors_resets_clock():
+    w = _idle_watcher([C, C], lambda: 1, lambda: 1000.0)   # rc=1: ran, had errors
+    w.tick()
+    w.wait_for_sync()
+    assert w.machine.last_sync == 1000.0
+
+
+def test_successful_sync_resets_clock():
+    w = _idle_watcher([C, C], lambda: 0, lambda: 1000.0)
+    w.tick()
+    w.wait_for_sync()
+    assert w.machine.last_sync == 1000.0
+
+
+# --- UNKNOWN status must not block silently -------------------------------------
+
+def test_parse_status_keeps_raw_reply_for_unknown():
+    s = parse_status("GET_STATUS WEIRD snes,Game")
+    assert s == "UNKNOWN" and s.raw == "GET_STATUS WEIRD snes,Game"
+
+
+def test_unknown_warns_first_time_with_raw_then_every_interval(caplog):
+    m = StateMachine(3, 900, unknown_warn_interval=900)
+    unknown = parse_status("GET_STATUS WEIRD snes,Game")
+    caplog.set_level("WARNING", logger="romm_sync.watch")
+
+    for t in range(0, 900, 60):                       # 15 minutes of polls
+        assert m.observe(unknown, float(t)) is None   # blocks, never syncs
+    warnings = [r for r in caplog.records if "unrecognized" in r.getMessage()]
+    assert len(warnings) == 1                          # once, not per poll
+    assert "GET_STATUS WEIRD snes,Game" in warnings[0].getMessage()
+
+    m.observe(unknown, 900.0)                          # interval elapsed: again
+    m.observe(unknown, 950.0)
+    warnings = [r for r in caplog.records if "unrecognized" in r.getMessage()]
+    assert len(warnings) == 2
+
+
+def test_unknown_warning_rearms_after_known_status(caplog):
+    m = StateMachine(3, 900, unknown_warn_interval=900)
+    unknown = parse_status("GET_STATUS WEIRD")
+    caplog.set_level("WARNING", logger="romm_sync.watch")
+    m.observe(unknown, 0.0)
+    m.observe(C, 1.0)                                  # known status arrives
+    m.observe(unknown, 2.0)                            # unknown again: warn at once
+    warnings = [r for r in caplog.records if "unrecognized" in r.getMessage()]
+    assert len(warnings) == 2
+
+
+def test_unknown_without_raw_still_warns(caplog):
+    m = StateMachine(3, 900)
+    caplog.set_level("WARNING", logger="romm_sync.watch")
+    m.observe("UNKNOWN", 0.0)
+    assert any("unrecognized" in r.getMessage() for r in caplog.records)
