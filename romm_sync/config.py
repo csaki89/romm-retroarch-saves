@@ -27,6 +27,17 @@ class ConfigError(RuntimeError):
 
 
 @dataclass
+class WatchConfig:
+    enabled: bool
+    poll_interval: float
+    idle_sync_interval: float
+    failure_threshold: int
+    udp_host: str
+    udp_port: int
+    retroarch_cfg: Path
+
+
+@dataclass
 class Config:
     path: Path
     url: str
@@ -39,6 +50,36 @@ class Config:
     log_file: Path
     log_level: str
     state_file: Path
+    watch: WatchConfig
+
+
+def _load_watch(parser):
+    def num(key, default, cast, minimum):
+        try:
+            value = cast(parser.get("watch", key, fallback=default))
+        except ValueError:
+            raise ConfigError(f"[watch] {key} must be a number")
+        if value < minimum:
+            raise ConfigError(f"[watch] {key} must be >= {minimum}")
+        return value
+
+    try:
+        enabled = parser.getboolean("watch", "enabled", fallback=True)
+    except ValueError:
+        raise ConfigError("[watch] enabled must be true or false")
+    port = num("udp_port", "55355", int, 1)
+    if port > 65535:
+        raise ConfigError("[watch] udp_port must be <= 65535")
+    cfg_path = parser.get("watch", "retroarch_cfg", fallback="").strip()
+    return WatchConfig(
+        enabled=enabled,
+        poll_interval=num("poll_interval", "1", float, 0.1),
+        idle_sync_interval=num("idle_sync_interval", "900", float, 1),
+        failure_threshold=num("failure_threshold", "3", int, 1),
+        udp_host=parser.get("watch", "udp_host", fallback="127.0.0.1").strip(),
+        udp_port=port,
+        retroarch_cfg=Path(cfg_path).expanduser() if cfg_path else None,
+    )
 
 
 def load_config(path=None):
@@ -95,6 +136,7 @@ def load_config(path=None):
         state_file=Path(
             get("state", "file", str(DEFAULT_STATE_DIR / "state.json"))
         ).expanduser(),
+        watch=_load_watch(parser),
     )
 
 
