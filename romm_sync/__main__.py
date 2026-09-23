@@ -68,14 +68,14 @@ def cmd_sync(args):
         if not args.states_only:
             s = run_save_sync(
                 client, sync_state.device_id, cfg.saves_dir, roms,
-                cfg.conflict_policy, args.dry_run,
+                cfg.conflict_policy, args.dry_run, cfg.backup_count,
             )
             _report("Saves", s)
             errors += s.errors
         if not args.saves_only:
             s = run_state_sync(
                 client, cfg.states_dir, roms, sync_state,
-                cfg.conflict_policy, args.dry_run,
+                cfg.conflict_policy, args.dry_run, cfg.backup_count,
             )
             _report("States", s)
             errors += s.errors

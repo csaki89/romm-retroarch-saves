@@ -60,6 +60,15 @@ systemctl --user enable --now romm-retroarch-sync.timer
   sync (`state.json`), matching states by exact file name.
 * **Conflicts** (both sides changed) follow `conflict_policy`
   (`newer` default / `local` / `server`) and are logged as warnings.
+* **Backups**: when a download would overwrite an existing local file, the
+  old file is first renamed to `<name>.bak-<timestamp>` (next to it). The
+  newest `backup_count` backups per file are kept (`[sync] backup_count`,
+  default 3, `0` disables). `.bak-*` and `.part` files are never synced.
+* **Safe writes**: downloads go to `<name>.part` and replace the target only
+  after a complete, size-checked download; on failure the `.part` is deleted
+  and the existing file is untouched. `state.json` is written the same way.
+  The backup is made right before the final swap, so a failed download
+  never moves your file away.
 * **Dry run**: saves are only listed, because negotiating creates a
   server-side session; server decisions for saves show up on a real run.
   States get a full dry-run plan.

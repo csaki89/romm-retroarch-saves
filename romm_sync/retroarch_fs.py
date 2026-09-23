@@ -8,6 +8,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from .backup import is_backup_or_temp
+
 _STATE_AUTO = ".state.auto"
 _STATE_NUMBERED = re.compile(r"^\.state\d+$")
 
@@ -38,7 +40,11 @@ def _files(root):
     if not root.is_dir():
         return
     for path in sorted(root.rglob("*")):
-        if path.is_file() and not path.name.startswith("."):
+        if (
+            path.is_file()
+            and not path.name.startswith(".")
+            and not is_backup_or_temp(path.name)
+        ):
             yield root, path
 
 

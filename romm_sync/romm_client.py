@@ -1,4 +1,5 @@
 """Minimal RomM 5.2.0 API client (saves/states sync only)."""
+import os
 import socket
 from pathlib import Path
 from urllib.parse import urljoin
@@ -157,7 +158,7 @@ class RomMClient:
             raise SaveConflict(resp.text[:200])
         resp.raise_for_status()
 
-    def download_save(self, save_id, device_id, session_id, target):
+    def download_save(self, save_id, device_id, session_id, target, before_replace=None):
         resp = self.session.get(
             self._url(f"api/saves/{save_id}/content"),
             params={
@@ -169,7 +170,7 @@ class RomMClient:
             stream=True,
         )
         resp.raise_for_status()
-        _write_stream(resp, target)
+        _write_stream(resp, target, before_replace)
 
     # states: plain CRUD, no negotiate/hash/device tracking in 5.2.0
 
@@ -192,20 +193,43 @@ class RomMClient:
         resp.raise_for_status()
         return resp.json()
 
-    def download_state(self, state_id, target):
+    def download_state(self, state_id, target, before_replace=None):
         resp = self.session.get(
             self._url(f"api/states/{state_id}/content"), timeout=120, stream=True
         )
         resp.raise_for_status()
-        _write_stream(resp, target)
+        _write_stream(resp, target, before_replace)
 
 
-def _write_stream(resp, target):
+def _write_stream(resp, target, before_replace=None):
+    """Download to <target>.part, verify, then atomically replace the target.
+
+    before_replace(target) runs only after a complete download, right before
+    the swap (used to back up the existing file). On any failure the .part
+    file is removed and the existing target is left untouched.
+    """
     target = Path(target)
     target.parent.mkdir(parents=True, exist_ok=True)
     tmp = target.with_name(target.name + ".part")
-    with open(tmp, "wb") as f:
-        for chunk in resp.iter_content(65536):
-            if chunk:
-                f.write(chunk)
-    tmp.replace(target)
+    try:
+        written = 0
+        with open(tmp, "wb") as f:
+            for chunk in resp.iter_content(65536):
+                if chunk:
+                    f.write(chunk)
+                    written += len(chunk)
+        expected = resp.headers.get("Content-Length")
+        if expected and not resp.headers.get("Content-Encoding"):
+            if written != int(expected):
+                raise IOError(
+                    f"Truncated download: got {written} of {expected} bytes"
+                )
+        if before_replace:
+            before_replace(target)
+        os.replace(tmp, target)
+    except BaseException:
+        try:
+            tmp.unlink()
+        except FileNotFoundError:
+            pass
+        raise

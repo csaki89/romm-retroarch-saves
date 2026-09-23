@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 
 
@@ -27,12 +28,19 @@ class SyncState:
 
     def save(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.path.with_suffix(self.path.suffix + ".tmp")
-        tmp.write_text(
-            json.dumps(
-                {"device_id": self.device_id, "states": self.states},
-                indent=2,
-                sort_keys=True,
+        tmp = self.path.with_name(self.path.name + ".tmp")
+        try:
+            tmp.write_text(
+                json.dumps(
+                    {"device_id": self.device_id, "states": self.states},
+                    indent=2,
+                    sort_keys=True,
+                )
             )
-        )
-        tmp.replace(self.path)
+            os.replace(tmp, self.path)
+        except BaseException:
+            try:
+                tmp.unlink()
+            except FileNotFoundError:
+                pass
+            raise

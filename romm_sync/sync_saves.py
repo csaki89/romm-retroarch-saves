@@ -7,7 +7,9 @@ local inventory and execute what comes back.
 import logging
 import re
 from dataclasses import dataclass
+from functools import partial
 
+from .backup import backup_existing
 from .common import iso_from_mtime, pick_winner
 from .hashing import compute_content_hash
 from .matcher import build_rom_index
@@ -77,8 +79,11 @@ def build_inventory(local_files, rom_index):
     return by_rom, unmatched
 
 
-def run_save_sync(client, device_id, saves_dir, roms, conflict_policy, dry_run):
+def run_save_sync(
+    client, device_id, saves_dir, roms, conflict_policy, dry_run, backup_count=3
+):
     summary = Summary()
+    backup = partial(backup_existing, keep=backup_count)
     local_files = scan_saves(saves_dir)
     layout_sorted = any(lf.emulator for lf in local_files)
     by_rom, summary.skipped_unmatched = build_inventory(
@@ -132,7 +137,9 @@ def run_save_sync(client, device_id, saves_dir, roms, conflict_policy, dry_run):
                 target = lf.path if lf else download_target(
                     saves_dir, layout_sorted, op.get("emulator"), name
                 )
-                client.download_save(op["save_id"], device_id, session_id, target)
+                client.download_save(
+                    op["save_id"], device_id, session_id, target, before_replace=backup
+                )
                 summary.downloaded += 1
                 completed += 1
                 log.info("Downloaded save -> %s (ROM %s): %s", target, rom_id, op.get("reason"))
@@ -157,7 +164,9 @@ def run_save_sync(client, device_id, saves_dir, roms, conflict_policy, dry_run):
                         op.get("emulator"),
                         strip_datetime_tag(op["file_name"]),
                     )
-                    client.download_save(op["save_id"], device_id, session_id, target)
+                    client.download_save(
+                        op["save_id"], device_id, session_id, target, before_replace=backup
+                    )
                 completed += 1
             else:
                 log.warning("Unknown negotiate action %r: %s", action, op)

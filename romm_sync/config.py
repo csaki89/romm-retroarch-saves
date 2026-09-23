@@ -35,6 +35,7 @@ class Config:
     saves_dir: Path
     states_dir: Path
     conflict_policy: str
+    backup_count: int
     log_file: Path
     log_level: str
     state_file: Path
@@ -71,6 +72,13 @@ def load_config(path=None):
             f"Invalid [sync] conflict_policy {policy!r}; use one of {CONFLICT_POLICIES}"
         )
 
+    try:
+        backup_count = int(get("sync", "backup_count", "3"))
+        if backup_count < 0:
+            raise ValueError
+    except ValueError:
+        raise ConfigError("[sync] backup_count must be an integer >= 0 (0 = off)")
+
     return Config(
         path=path,
         url=url.rstrip("/"),
@@ -79,6 +87,7 @@ def load_config(path=None):
         saves_dir=Path(get("retroarch", "saves_dir", DEFAULT_SAVES_DIR)).expanduser(),
         states_dir=Path(get("retroarch", "states_dir", DEFAULT_STATES_DIR)).expanduser(),
         conflict_policy=policy,
+        backup_count=backup_count,
         log_file=Path(
             get("logging", "file", str(DEFAULT_STATE_DIR / "sync.log"))
         ).expanduser(),
@@ -112,6 +121,8 @@ def write_token(path, url, token, device_name=None):
         parser.set("retroarch", "states_dir", DEFAULT_STATES_DIR)
     if not parser.has_option("sync", "conflict_policy"):
         parser.set("sync", "conflict_policy", "newer")
+    if not parser.has_option("sync", "backup_count"):
+        parser.set("sync", "backup_count", "3")
     if not parser.has_option("logging", "level"):
         parser.set("logging", "level", "INFO")
 

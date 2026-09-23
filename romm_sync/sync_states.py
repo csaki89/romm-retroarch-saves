@@ -9,7 +9,9 @@ rename them).
 import logging
 from collections import defaultdict
 from dataclasses import dataclass
+from functools import partial
 
+from .backup import backup_existing
 from .common import pick_winner
 from .matcher import build_rom_index
 from .retroarch_fs import download_target, scan_states
@@ -27,8 +29,11 @@ class Summary:
     errors: int = 0
 
 
-def run_state_sync(client, states_dir, roms, sync_state, conflict_policy, dry_run):
+def run_state_sync(
+    client, states_dir, roms, sync_state, conflict_policy, dry_run, backup_count=3
+):
     summary = Summary()
+    backup = partial(backup_existing, keep=backup_count)
     rom_index = build_rom_index(roms)
     local_files = scan_states(states_dir)
     layout_sorted = any(lf.emulator for lf in local_files)
@@ -53,8 +58,10 @@ def run_state_sync(client, states_dir, roms, sync_state, conflict_policy, dry_ru
     def download(rom_id, target, row):
         if dry_run:
             log.info("[dry-run] would download state -> %s (ROM %s)", target, rom_id)
+            if backup_count > 0 and target.exists():
+                log.info("[dry-run] would back up existing %s first", target.name)
         else:
-            client.download_state(row["id"], target)
+            client.download_state(row["id"], target, before_replace=backup)
             st = target.stat()
             sync_state.states[str(target)] = {
                 "size": st.st_size,
