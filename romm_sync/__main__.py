@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 from . import __version__, config as cfgmod
+from .lock import InstanceLock
 from .logging_setup import setup_logging
 from .romm_client import RomMClient
 from .runner import perform_sync
@@ -40,8 +41,6 @@ def cmd_sync(args):
 
 
 def cmd_watch(args):
-    from . import watch
-
     try:
         cfg = cfgmod.load_config(args.config)
     except cfgmod.ConfigError as exc:
@@ -53,6 +52,26 @@ def cmd_watch(args):
     if not w.enabled:
         log.error("watch is disabled: set [watch] enabled = true in %s", cfg.path)
         return 2
+
+    lock = InstanceLock(cfg.state_file.parent / "watch.pid")
+    if not lock.acquire():
+        pid = lock.holder_pid()
+        log.warning(
+            "Another `romm-sync watch` is already running%s (lock: %s); "
+            "exiting without starting a second instance.",
+            f" (PID {pid})" if pid else "", lock.path,
+        )
+        return 0
+    try:
+        return _run_watch(cfg, args)
+    finally:
+        lock.release()
+
+
+def _run_watch(cfg, args):
+    from . import watch
+
+    w = cfg.watch
 
     if w.udp_host in watch.LOOPBACK:
         cfg_path = watch.find_retroarch_cfg(w, cfg.saves_dir)

@@ -80,6 +80,16 @@ Settings live in the `[watch]` section (`enabled`, `poll_interval`,
 `idle_sync_interval`, `failure_threshold`, `udp_host`, `udp_port`; see
 `config.example.ini`). Run it with `romm-sync watch [-v] [--dry-run]`.
 
+**Single instance:** `watch` takes an exclusive `flock` on
+`watch.pid` next to `state.json` (default `~/.local/state/romm-retroarch-sync/`).
+If another `watch` already runs (e.g. an autostart entry firing twice), the new
+one logs which PID holds the lock and exits with code 0, so two instances never
+write `state.json` at once. The kernel drops the lock when the process dies,
+even on a crash or `kill -9`, so a leftover PID file never blocks a restart.
+If supervisord and another launcher both start `watch`, the loser exits at
+once and supervisord may report it as "exited too quickly"; run it from one
+place only.
+
 ### supervisord (container without systemd)
 
 `packaging/supervisor/romm-retroarch-watch.conf` is a supervisord program
