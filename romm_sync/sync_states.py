@@ -30,13 +30,15 @@ class Summary:
 
 
 def run_state_sync(
-    client, states_dir, roms, sync_state, conflict_policy, dry_run, backup_count=3
+    client, states_dir, roms, sync_state, conflict_policy, dry_run, backup_count=3,
+    layout_sorted=None,
 ):
     summary = Summary()
     backup = partial(backup_existing, keep=backup_count)
     rom_index = build_rom_index(roms)
     local_files = scan_states(states_dir)
-    layout_sorted = any(lf.emulator for lf in local_files)
+    if layout_sorted is None:
+        layout_sorted = any(lf.emulator for lf in local_files)
 
     server = defaultdict(dict)  # rom_id -> file_name -> state row
     for row in client.get_all_states():

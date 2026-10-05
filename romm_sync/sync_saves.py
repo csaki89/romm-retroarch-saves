@@ -80,12 +80,14 @@ def build_inventory(local_files, rom_index):
 
 
 def run_save_sync(
-    client, device_id, saves_dir, roms, conflict_policy, dry_run, backup_count=3
+    client, device_id, saves_dir, roms, conflict_policy, dry_run, backup_count=3,
+    layout_sorted=None,
 ):
     summary = Summary()
     backup = partial(backup_existing, keep=backup_count)
     local_files = scan_saves(saves_dir)
-    layout_sorted = any(lf.emulator for lf in local_files)
+    if layout_sorted is None:
+        layout_sorted = any(lf.emulator for lf in local_files)
     by_rom, summary.skipped_unmatched = build_inventory(
         local_files, build_rom_index(roms)
     )

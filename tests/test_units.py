@@ -290,3 +290,60 @@ def test_state_json_write_is_atomic(tmp_path, monkeypatch):
 
     assert SyncState.load(tmp_path / "state.json").device_id == "one"
     assert not (tmp_path / "state.json.tmp").exists()
+
+
+def test_save_download_into_empty_dir_sorted(tmp_path):
+    ops = [{"action": "download", "rom_id": 2, "save_id": 5, "emulator": "mGBA",
+            "file_name": "New [2026-01-02_03-04-05].srm"}]
+    c = FakeClient(ops)
+    run_save_sync(c, "dev", tmp_path, ROMS, "newer", dry_run=False, layout_sorted=True)
+    assert ("download_save", 5, str(tmp_path / "mGBA" / "New.srm")) in c.calls
+
+
+def test_save_download_into_empty_dir_flat(tmp_path):
+    ops = [{"action": "download", "rom_id": 2, "save_id": 5, "emulator": "mGBA",
+            "file_name": "New [2026-01-02_03-04-05].srm"}]
+    c = FakeClient(ops)
+    run_save_sync(c, "dev", tmp_path, ROMS, "newer", dry_run=False, layout_sorted=False)
+    assert ("download_save", 5, str(tmp_path / "New.srm")) in c.calls
+
+
+def test_state_download_into_empty_dir_sorted(tmp_path):
+    server = [{"id": 10, "rom_id": 2, "file_name": "New.state", "emulator": "mGBA",
+               "updated_at": "2026-01-01T00:00:00Z"}]
+    c = FakeClient(states=server)
+    s = run_state_sync(c, tmp_path, ROMS, SyncState(tmp_path / "s.json"), "newer",
+                       dry_run=True, layout_sorted=True)
+    assert s.downloaded == 1
+
+
+def test_sort_layout(tmp_path):
+    from romm_sync.retroarch_cfg import sort_layout
+
+    cfg = tmp_path / "retroarch.cfg"
+    cfg.write_text('sort_savefiles_enable = "true"\nsort_savestates_enable = "false"\n')
+    assert sort_layout(cfg) == (True, False)
+    cfg.write_text('sort_savefiles_enable = "false"\n')
+    assert sort_layout(cfg) == (False, None)
+    assert sort_layout(tmp_path / "missing.cfg") == (None, None)
+    assert sort_layout(None) == (None, None)
+
+
+def test_register_device_sends_reset_syncs():
+    from romm_sync.romm_client import RomMClient
+
+    sent = []
+
+    class Resp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"id": "dev-1"}
+
+    client = RomMClient("http://romm.local", "tok")
+    client.session.post = lambda url, json=None, timeout=None: (sent.append(json), Resp())[1]
+    assert client.register_device("n", "Linux", reset_syncs=True) == "dev-1"
+    assert sent[-1]["reset_syncs"] is True
+    client.register_device("n", "Linux")
+    assert sent[-1]["reset_syncs"] is False

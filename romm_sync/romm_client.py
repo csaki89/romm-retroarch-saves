@@ -62,7 +62,7 @@ class RomMClient:
             )
         resp.raise_for_status()
 
-    def register_device(self, name, platform_name):
+    def register_device(self, name, platform_name, reset_syncs=False):
         resp = self.session.post(
             self._url("api/devices"),
             json={
@@ -73,6 +73,7 @@ class RomMClient:
                 "hostname": socket.gethostname(),
                 "allow_existing": True,
                 "allow_duplicate": False,
+                "reset_syncs": reset_syncs,
             },
             timeout=self.timeout,
         )

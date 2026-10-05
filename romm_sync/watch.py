@@ -7,11 +7,12 @@ loaded, so syncs are triggered only from states with nothing in memory.
 """
 import enum
 import logging
-import re
 import socket
 import threading
 import time
 from pathlib import Path
+
+from .retroarch_cfg import cfg_value as _cfg_value
 
 log = logging.getLogger("romm_sync.watch")
 
@@ -61,24 +62,6 @@ def query_status(host, port, timeout=0.5):
 
 
 # --- retroarch.cfg check ---------------------------------------------------
-
-def find_retroarch_cfg(watch_cfg, saves_dir):
-    if watch_cfg.retroarch_cfg:
-        return watch_cfg.retroarch_cfg if watch_cfg.retroarch_cfg.is_file() else None
-    candidates = [
-        Path(saves_dir).parent / "retroarch.cfg",
-        Path("~/.var/app/org.libretro.RetroArch/config/retroarch/retroarch.cfg").expanduser(),
-        Path("~/.config/retroarch/retroarch.cfg").expanduser(),
-    ]
-    return next((c for c in candidates if c.is_file()), None)
-
-
-def _cfg_value(text, key):
-    matches = re.findall(
-        rf'^\s*{re.escape(key)}\s*=\s*"?([^"\r\n]*?)"?\s*$', text, re.MULTILINE
-    )
-    return matches[-1] if matches else None
-
 
 def check_network_commands(cfg_path, port):
     """Return an error message, or None if the UDP command interface is on."""

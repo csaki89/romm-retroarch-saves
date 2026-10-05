@@ -7,8 +7,9 @@ from pathlib import Path
 from . import __version__, config as cfgmod
 from .lock import InstanceLock
 from .logging_setup import setup_logging
+from .retroarch_cfg import find_retroarch_cfg
 from .romm_client import RomMClient
-from .runner import perform_sync
+from .runner import perform_sync, reset_device
 
 log = logging.getLogger("romm_sync")
 
@@ -38,6 +39,16 @@ def cmd_sync(args):
         saves_only=args.saves_only,
         states_only=args.states_only,
     )
+
+
+def cmd_reset_device(args):
+    try:
+        cfg = cfgmod.load_config(args.config)
+    except cfgmod.ConfigError as exc:
+        print(exc, file=sys.stderr)
+        return 2
+    setup_logging(cfg.log_file, cfg.log_level, args.verbose)
+    return reset_device(cfg)
 
 
 def cmd_watch(args):
@@ -74,7 +85,7 @@ def _run_watch(cfg, args):
     w = cfg.watch
 
     if w.udp_host in watch.LOOPBACK:
-        cfg_path = watch.find_retroarch_cfg(w, cfg.saves_dir)
+        cfg_path = find_retroarch_cfg(w.retroarch_cfg, cfg.saves_dir)
         if cfg_path is None:
             log.warning(
                 "retroarch.cfg not found; cannot verify network_cmd_enable "
@@ -126,6 +137,15 @@ def build_parser():
     sync.add_argument("--states-only", action="store_true")
     sync.add_argument("-v", "--verbose", action="store_true")
     sync.set_defaults(func=cmd_sync)
+
+    reset = sub.add_parser(
+        "reset-device",
+        help="forget RomM's sync records for this device so missing local "
+             "saves are downloaded again",
+    )
+    reset.add_argument("--config", help=default_cfg)
+    reset.add_argument("-v", "--verbose", action="store_true")
+    reset.set_defaults(func=cmd_reset_device)
 
     watch = sub.add_parser(
         "watch",

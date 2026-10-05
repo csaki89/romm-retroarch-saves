@@ -121,6 +121,17 @@ startup is specific to your setup and is not covered here. Logs:
   Unmatched or ambiguous names are skipped and logged, never guessed.
 * **Saves** use RomM's `/api/sync/negotiate` engine (slot `autosave`, MD5
   content hash). The server decides upload/download/conflict per device.
+* **Device identity**: RomM identifies a device by hostname + platform, so a
+  reinstall maps back to the same device and its old sync records. A save
+  that vanished locally then looks like a deliberate deletion and is never
+  downloaded again. With no `device_id` in `state.json` (fresh install) the
+  tool registers with `reset_syncs`, which clears those records; run
+  `romm-sync reset-device` by hand if saves go missing for another reason.
+* **Folder layout**: flat (`saves/Game.srm`) vs. per-core (`saves/<core>/`)
+  is read from `retroarch.cfg` (`sort_savefiles_enable` /
+  `sort_savestates_enable`), so downloads into an empty folder land where
+  RetroArch looks. If the cfg is not found, the layout is guessed from the
+  existing local files.
 * **States** have no negotiate/hash in RomM 5.2.0, so the tool compares local
   size+mtime and the server's `updated_at` with what it recorded at the last
   sync (`state.json`), matching states by exact file name.
